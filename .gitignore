@@ -43,3 +43,6 @@ next-env.d.ts
 # Local SQLite database & uploaded images
 /data/
 /uploads/
+
+# Tesseract local cache
+*.traineddata
