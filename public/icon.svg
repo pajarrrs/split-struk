@@ -1,0 +1,14 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
+  <defs>
+    <linearGradient id="iosBlue" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#3898FF"/>
+      <stop offset="100%" stop-color="#007AFF"/>
+    </linearGradient>
+  </defs>
+  <rect width="512" height="512" rx="116" fill="url(#iosBlue)"/>
+  <path d="M144 106h224v300l-37-22-37 22-38-22-38 22-37-22-37 22V106Z" fill="#FFFFFF"/>
+  <rect x="182" y="164" width="148" height="20" rx="10" fill="#1C1C1E"/>
+  <rect x="182" y="210" width="102" height="16" rx="8" fill="#AEAEB2"/>
+  <rect x="182" y="256" width="148" height="20" rx="10" fill="#007AFF"/>
+  <rect x="182" y="302" width="88" height="16" rx="8" fill="#C7C7CC"/>
+</svg>
