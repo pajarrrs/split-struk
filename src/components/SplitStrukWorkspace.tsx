@@ -5,7 +5,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Camera, ChevronRight, Image as ImageIcon, Minus, Plus, X } from "lucide-react";
 import {
   prepareReceiptForUpload,
-  preprocessReceiptForTesseract,
+  preprocessReceiptCandidatesForTesseract,
 } from "@/lib/image-preprocess";
 import { parseIndonesianReceiptText } from "@/lib/receipt-parser";
 import {
@@ -234,7 +234,7 @@ export function SplitStrukWorkspace({ editSlug }: { editSlug?: string | null }) 
 
       setScanLabel("Meningkatkan kontras foto...");
       setScanProgress(5);
-      const enhancedBlob = await preprocessReceiptForTesseract(file);
+      const candidates = await preprocessReceiptCandidatesForTesseract(file);
 
       setScanLabel("Memindai teks struk...");
       setScanProgress(12);
@@ -253,17 +253,34 @@ export function SplitStrukWorkspace({ editSlug }: { editSlug?: string | null }) 
       });
 
       try {
-        const result = await worker.recognize(enhancedBlob);
-        const parsed = parseIndonesianReceiptText(result.data.text || "");
-        applyParsedReceipt(parsed, data.receipt_image_url);
-        if (parsed.items.length === 0) {
+        let bestParsed: ParsedReceiptResult | null = null;
+
+        for (const candidateBlob of candidates) {
+          const result = await worker.recognize(candidateBlob);
+          const rawText = result.data.text || "";
+          const parsed = parseIndonesianReceiptText(rawText);
+
+          if (!bestParsed || parsed.items.length > bestParsed.items.length) {
+            bestParsed = parsed;
+          }
+          if (
+            parsed.items.length > 0 &&
+            (parsed.printed_total || /total|subtotal|harga|tunai/i.test(rawText))
+          ) {
+            break;
+          }
+        }
+
+        const finalParsed = bestParsed ?? parseIndonesianReceiptText("");
+        applyParsedReceipt(finalParsed, data.receipt_image_url);
+        if (finalParsed.items.length === 0) {
           notify(
             "Teks kurang terbaca — foto tersimpan, silakan ketik item.",
             "error"
           );
         } else {
           notify(
-            `${parsed.items.length} item terbaca (OCR lokal). Koreksi bila ada yang keliru.`,
+            `${finalParsed.items.length} item terbaca. Koreksi bila ada yang keliru.`,
             "success"
           );
         }

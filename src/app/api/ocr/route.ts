@@ -25,14 +25,15 @@ Aturan wajib:
    - Format 2 baris POS/kafe (Moka/Majoo/ESB/Qasir): baris 1 nama menu, baris 2 "2 x 28.000   56.000" -> gabungkan menjadi 1 item (qty=2, unit_price=28000).
    - Jangan gabungkan angka qty/harga ke dalam field "name".
    - Abaikan sub-baris catatan/modifier dengan harga 0 (misal "Less Ice", "Pedas", "No Sugar"). Jika topping/add-on punya harga > 0, masukkan sebagai item sendiri atau gabungkan ke harga itemnya.
-3. Pajak (tax_amount) & Struk GoFood/GrabFood/ShopeeFood:
-   - Untuk struk GoFood/GrabFood/ShopeeFood (misal Se'i Sapi):
+3. Pajak (tax_amount) & Struk GoFood/GrabFood/ShopeeFood (misal Se'Indonesia / Se'i Sapi):
+   - Untuk struk GoFood/GrabFood/ShopeeFood:
      * Abaikan nomor PIN GoFood, Order ID (F-xxxx), nomor antrian, alamat, atau nama driver.
+     * Jika pada struk dapur/merchant (misal Se'Indonesia) baris menu seperti "1 x [FS] #B1G1 Reguler Sei Sapi x Sei Ayam" tidak memiliki kolom harga di sampingnya dan harga baru tertulis di baris "Subtotal Rp 85.800", maka gunakan nilai Subtotal tersebut sebagai harga itemnya.
      * Jika item memiliki harga coret (harga asli vs harga promo), gunakan HARGA PROMO (harga yang lebih rendah yang benar-benar ditagihkan).
-     * Baris sub-pilihan seperti "Sambal: Sambal Luat", "Sayur: Daun Singkong", "Catatan: ..." tanpa harga tambahan JANGAN dijadikan item terpisah.
-     * "Biaya Penanganan dan Pengiriman", "Ongkos Kirim", "Biaya Bungkus/Kemasan", "Biaya Pemesanan/Layanan/Platform" -> jumlahkan ke other_fee_amount.
-     * "Diskon makanan", "Diskon pengiriman", "Voucher GoFood" -> jumlahkan sebagai angka positif ke discount_amount.
-     * Gunakan "Total pembayaran" / "Total tagihan" sebagai printed_total (bukan "Total harga" yang hanya subtotal makanan).
+     * Baris sub-pilihan seperti "+ Daging Sapi Original R", "+ FREE Nasi Putih", "Sambal: ...", "Catatan: ..." tanpa harga tambahan JANGAN dijadikan item terpisah.
+     * "Restaurant Packaging Fee", "Biaya Penanganan dan Pengiriman", "Ongkos Kirim", "Biaya Bungkus/Kemasan", "Biaya Pemesanan/Layanan/Platform" -> jumlahkan ke other_fee_amount.
+     * "Total Promo", "Diskon makanan", "Diskon pengiriman", "Voucher GoFood" -> jumlahkan sebagai angka positif ke discount_amount.
+     * Gunakan "Total" / "Total pembayaran" / "Total tagihan" final sebagai printed_total (bukan "Subtotal" atau "Total harga").
    - Untuk struk minimarket/supermarket (Indomaret, Alfamart, Super Indo) di mana PPN/DPP di bagian bawah sudah termasuk harga barang (tax-inclusive), WAJIB isi tax_amount = 0.
    - Hanya isi tax_amount > 0 jika PB1/PPN/Pajak Restoran benar-benar ditambahkan DI ATAS subtotal.
 4. Biaya & Diskon:
