@@ -1,10 +1,4 @@
-import fs from "node:fs";
-import path from "node:path";
-import {
-  getMimeFromFilename,
-  isValidUploadFilename,
-  UPLOADS_DIR,
-} from "@/lib/uploads";
+import { isValidUploadFilename, readUploadedImage } from "@/lib/uploads";
 
 export async function GET(
   _request: Request,
@@ -15,16 +9,15 @@ export async function GET(
     return Response.json({ error: "File tidak valid." }, { status: 400 });
   }
 
-  const fullPath = path.join(UPLOADS_DIR, filename);
-  if (!fs.existsSync(fullPath)) {
+  const found = await readUploadedImage(filename);
+  if (!found) {
     return Response.json({ error: "Gambar tidak ditemukan." }, { status: 404 });
   }
 
-  const bytes = fs.readFileSync(fullPath);
-  return new Response(bytes, {
+  return new Response(new Uint8Array(found.buffer), {
     status: 200,
     headers: {
-      "Content-Type": getMimeFromFilename(filename),
+      "Content-Type": found.mime,
       "Cache-Control": "public, max-age=86400",
     },
   });

@@ -43,8 +43,12 @@ export const billSchema = z.object({
 });
 
 export async function GET() {
-  const bills = listRecentBills(30);
-  return Response.json({ bills });
+  try {
+    const bills = await listRecentBills(30);
+    return Response.json({ bills });
+  } catch {
+    return Response.json({ error: "Gagal memuat daftar split bill." }, { status: 500 });
+  }
 }
 
 export async function POST(request: Request) {
@@ -58,7 +62,7 @@ export async function POST(request: Request) {
       );
     }
 
-    const saved = saveBillRecord(parsed.data);
+    const saved = await saveBillRecord(parsed.data);
     return Response.json({ bill: saved }, { status: 201 });
   } catch {
     return Response.json({ error: "Gagal menyimpan split bill." }, { status: 500 });

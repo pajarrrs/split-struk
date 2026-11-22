@@ -17,12 +17,16 @@ export async function GET(
     return Response.json({ error: "Kode bill tidak valid." }, { status: 400 });
   }
 
-  const bill = getBillBySlug(slug);
-  if (!bill) {
-    return Response.json({ error: "Bill tidak ditemukan." }, { status: 404 });
-  }
+  try {
+    const bill = await getBillBySlug(slug);
+    if (!bill) {
+      return Response.json({ error: "Bill tidak ditemukan." }, { status: 404 });
+    }
 
-  return Response.json({ bill });
+    return Response.json({ bill });
+  } catch {
+    return Response.json({ error: "Gagal memuat detail bill." }, { status: 500 });
+  }
 }
 
 export async function PATCH(
@@ -34,12 +38,12 @@ export async function PATCH(
     return Response.json({ error: "Kode bill tidak valid." }, { status: 400 });
   }
 
-  const existing = getBillBySlug(slug);
-  if (!existing) {
-    return Response.json({ error: "Bill tidak ditemukan." }, { status: 404 });
-  }
-
   try {
+    const existing = await getBillBySlug(slug);
+    if (!existing) {
+      return Response.json({ error: "Bill tidak ditemukan." }, { status: 404 });
+    }
+
     const body = await request.json();
     const toggleParsed = togglePaidSchema.safeParse(body);
     if (toggleParsed.success) {
@@ -48,7 +52,7 @@ export async function PATCH(
           ? { ...p, is_paid: toggleParsed.data.is_paid }
           : p
       );
-      const saved = saveBillRecord({
+      const saved = await saveBillRecord({
         ...existing,
         slug,
         participants: updatedParticipants,
@@ -64,7 +68,7 @@ export async function PATCH(
       );
     }
 
-    const saved = saveBillRecord(fullParsed.data);
+    const saved = await saveBillRecord(fullParsed.data);
     return Response.json({ bill: saved });
   } catch {
     return Response.json({ error: "Gagal memperbarui bill." }, { status: 500 });
@@ -80,9 +84,13 @@ export async function DELETE(
     return Response.json({ error: "Kode bill tidak valid." }, { status: 400 });
   }
 
-  const ok = deleteBillBySlug(slug);
-  if (!ok) {
-    return Response.json({ error: "Bill tidak ditemukan." }, { status: 404 });
+  try {
+    const ok = await deleteBillBySlug(slug);
+    if (!ok) {
+      return Response.json({ error: "Bill tidak ditemukan." }, { status: 404 });
+    }
+    return Response.json({ ok: true });
+  } catch {
+    return Response.json({ error: "Gagal menghapus bill." }, { status: 500 });
   }
-  return Response.json({ ok: true });
 }
