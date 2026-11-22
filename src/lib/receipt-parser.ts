@@ -2,30 +2,48 @@ import { getTodayIsoDate } from "./split-math";
 import type { ParsedReceiptResult } from "./types";
 
 const NOISE_PATTERNS = [
-  /^(jl\.|jalan|telp|tel|phone|hp|wa|npwp|ig:|instagram|www\.|http|no\.?\s*struk|no\.?\s*nota|receipt\s*#|order\s*#|bill\s*#|trx|ref\b)/i,
-  /(terima\s*kasih|thank\s*you|selamat\s*datang|welcome|struk|invoice|receipt|kasir|cashier|order\s*no|table|meja|guest|pax|poinku|stamp|lucky|member|point|poin|call\s*center|layanan\s*konsumen|kritik|saran|pt\.\s*indomarco|pt\.\s*sumber\s*alfaria|powered\s*by|moka|majoo|qasir|wifi|password)/i,
-  /^(tunai|cash|debit|credit|kredit|qris|gopay|go-?pay|ovo|dana|bca|mandiri|bni|bri|edc|visa|mastercard|change|kembali|kembalian|bayar|payment|paid|total\s*item|total\s*qty|qty|item\s*count|id\s*poinku|cek\s*poin|dpp|non\s*tunai|e-wallet|shopeepay|flazz|emoney|e-money)/i,
+  /^(jl\.|jalan|telp|tel|phone|hp|wa|npwp|ig:|instagram|www\.|http|no\.?\s*struk|no\.?\s*nota|no\.?\s*pesanan|no\.?\s*order|order\s*id|booking\s*id|receipt\s*#|order\s*#|bill\s*#|trx|ref\b|pin\b|kode\s*pin|antrian|queue|waktu|tanggal|date|time|driver|kurir|pelanggan|customer|pemesan|alamat|ambil\s*di|dikirim\s*ke)/i,
+  /(terima\s*kasih|thank\s*you|selamat\s*datang|welcome|struk|invoice|receipt|kasir|cashier|order\s*no|table|meja|guest|pax|poinku|stamp|lucky|member|point|poin|call\s*center|layanan\s*konsumen|kritik|saran|pt\.\s*indomarco|pt\.\s*sumber\s*alfaria|powered\s*by|moka|majoo|qasir|gobiz|go-?biz|wifi|password|detail\s*pesanan|ringkasan\s*pembayaran|rincian\s*pembayaran|metode\s*pembayaran|status\s*pesanan|pesanan\s*selesai)/i,
+  /^(tunai|cash|debit|credit|kredit|qris|gopay|go-?pay|gopaylater|ovo|dana|linkaja|bca|mandiri|bni|bri|edc|visa|mastercard|change|kembali|kembalian|bayar|payment|paid|total\s*item|total\s*qty|qty|item\s*count|id\s*poinku|cek\s*poin|dpp|non\s*tunai|e-wallet|shopeepay|flazz|emoney|e-money)/i,
   /^[-=_*#.\s]{3,}$/,
 ];
 
-const SECTION_END_PATTERNS = [
-  /\b(harga\s*jual|sub\s*total|subtotal|grand\s*total|total\s*bayar|total\s*belanja|total\s*harga|net\s*sales|jumlah\s*bayar|total\s*tagihan|amount\s*due)\b/i,
+// Subtotal markers transition out of item list into fees/discounts, WITHOUT overwriting final grand total
+const SUBTOTAL_PATTERNS = [
+  /\b(harga\s*jual|sub\s*total|subtotal|total\s*harga|harga\s*makanan)\b/i,
+  /^\s*harga\s*[:=\s]/i,
+];
+
+// Final grand total markers
+const GRAND_TOTAL_PATTERNS = [
+  /\b(grand\s*total|total\s*pembayaran|total\s*bayar|total\s*belanja|total\s*tagihan|jumlah\s*bayar|net\s*sales|amount\s*due)\b/i,
   /^\s*total\s*[:=\s]/i,
 ];
 
 const POST_TOTAL_STOP_PATTERNS = [
-  /\b(tunai|cash|kembali|kembalian|change|anda\s*hemat|total\s*hemat|dpp\s*=|ppn\s*dibebaskan|id\s*poinku)\b/i,
+  /\b(tunai|cash|kembali|kembalian|change|anda\s*hemat|total\s*hemat|kamu\s*hemat|dpp\s*=|ppn\s*dibebaskan|id\s*poinku|dibayar\s*dengan|pakai\s*gopay|pakai\s*qris)\b/i,
 ];
 
-/**
- * Repairs common OCR digit confusions inside price tokens (e.g. "25.OOO" -> "25.000", "15.0O0" -> "15.000").
- */
+// Modifier / variant / note sub-lines common on GoFood / GrabFood / Se'i Sapi receipts
+const MODIFIER_LINE_PATTERNS = [
+  /^[+*•\-–—]\s+/,
+  /^(pilihan|pilih|varian|variant|level|ukuran|size|sambal|sayur|kuah|topping|add-?on|extra|ekstra|catatan|note|notes|request|custom|kemasan|packaging)\s*[:\-]/i,
+  /^(tidak\s*pedas|sedang|pedas|extra\s*pedas|less\s*sugar|normal\s*sugar|less\s*ice|normal\s*ice|pisah\s*sambal|sambal\s*pisah)$/i,
+];
+
 function repairNumericToken(raw: string): string {
   return raw
     .replace(/[OoQD]/g, "0")
     .replace(/[Il|]/g, "1")
     .replace(/[Ss]/g, "5")
     .replace(/B/g, "8");
+}
+
+function normalizeSpacedThousands(line: string): string {
+  // Collapse thermal printer spaces after thousand separator: "18, 000" -> "18.000", "(1, 300)" -> "(1.300)"
+  return line
+    .replace(/([\dOo])[.,]\s+([\dOo]{3}\b)/g, "$1.$2")
+    .replace(/([\dOo])[.,]\s+([\dOo]{3}\b)/g, "$1.$2");
 }
 
 function parseIdrToken(raw: string): number {
@@ -46,6 +64,19 @@ function parseIdrToken(raw: string): number {
   return num;
 }
 
+/**
+ * Checks whether a price token looks like a genuine Indonesian Rupiah price
+ * rather than a 4-digit GoFood PIN (4821), postal code (60284), or Order ID (5839201).
+ */
+function isPlausibleIdrPrice(rawToken: string, amount: number): boolean {
+  if (amount < 100 || amount > 25000000) return false;
+  const hasRp = /rp/i.test(rawToken);
+  const hasThousandSep = /[.,]\d{3}\b/.test(repairNumericToken(rawToken));
+  if (hasRp || hasThousandSep) return true;
+  // Unformatted integer without "Rp" or "."/"," must be a clean multiple of 100 (or 50) >= 500
+  return amount >= 500 && amount <= 1000000 && amount % 50 === 0;
+}
+
 function extractReceiptDate(rawText: string): string {
   const m = rawText.match(/\b(\d{2})[./-](\d{2})[./-](\d{2,4})\b/);
   if (!m) return getTodayIsoDate();
@@ -60,6 +91,11 @@ function extractReceiptDate(rawText: string): string {
 }
 
 function detectKnownMerchant(rawText: string): string {
+  // Check specific restaurant brand names first (even if ordered via GoFood/GrabFood)
+  const seiMatch = rawText.match(/\b(se'?i[ \t]*sapi[a-z0-9 \t.'-]{0,24})/i);
+  if (seiMatch) {
+    return seiMatch[1].replace(/\s+/g, " ").trim();
+  }
   if (/poinku|indomaret|\bidm\b/i.test(rawText)) return "Indomaret";
   if (/alfamart|alfagift|sumber\s*alfaria/i.test(rawText)) return "Alfamart";
   if (/alfamidi/i.test(rawText)) return "Alfamidi";
@@ -74,25 +110,34 @@ function detectKnownMerchant(rawText: string): string {
   if (/mcdonald/i.test(rawText)) return "McDonald's";
   if (/\bkfc\b/i.test(rawText)) return "KFC";
   if (/mie\s*gacoan|gacoan/i.test(rawText)) return "Mie Gacoan";
+  if (/gofood|go-?food/i.test(rawText)) return "GoFood";
+  if (/grabfood|grab-?food/i.test(rawText)) return "GrabFood";
+  if (/shopeefood|shopee\s*food/i.test(rawText)) return "ShopeeFood";
   return "";
 }
 
+function isModifierOrNoteLine(line: string): boolean {
+  return MODIFIER_LINE_PATTERNS.some((p) => p.test(line));
+}
+
 function isLikelyItemNameOnly(line: string): boolean {
-  if (line.length < 2 || line.length > 56) return false;
+  if (line.length < 3 || line.length > 64) return false;
   if (!/[a-zA-Z]{2,}/.test(line)) return false;
   if (/^\d{2}[./-]\d{2}[./-]\d{2,4}/.test(line)) return false;
+  if (isModifierOrNoteLine(line)) return false;
   if (NOISE_PATTERNS.some((p) => p.test(line))) return false;
-  if (SECTION_END_PATTERNS.some((p) => p.test(line))) return false;
+  if (SUBTOTAL_PATTERNS.some((p) => p.test(line))) return false;
+  if (GRAND_TOTAL_PATTERNS.some((p) => p.test(line))) return false;
   if (POST_TOTAL_STOP_PATTERNS.some((p) => p.test(line))) return false;
-  // Exclude metadata lines like "Kasir: Budi" or "0812-3456-7890"
   if (/\b\d{4}[-\s]?\d{4}\b/.test(line)) return false;
+  if (/\b(gofood|go-?food|grabfood|shopeefood|gobiz)\b/i.test(line)) return false;
   return true;
 }
 
 export function parseIndonesianReceiptText(rawText: string): ParsedReceiptResult {
   const rawLines = rawText
     .split(/\r?\n/)
-    .map((l) => l.replace(/\s+/g, " ").trim())
+    .map((l) => normalizeSpacedThousands(l.replace(/\s+/g, " ").trim()))
     .filter(Boolean);
 
   let merchantName = detectKnownMerchant(rawText);
@@ -101,15 +146,17 @@ export function parseIndonesianReceiptText(rawText: string): ParsedReceiptResult
   let otherFeeAmount = 0;
   let discountAmount = 0;
   let detectedReceiptTotal = 0;
+  let detectedSubtotal = 0;
   let detectedSavings = 0;
   let inSummarySection = false;
   let pastTotalPaymentLine = false;
   let pendingItemName: string | null = null;
+  let pendingItemQty: number | null = null;
 
   const items: Array<{ name: string; qty: number; unit_price: number }> = [];
 
   if (!merchantName) {
-    for (const line of rawLines.slice(0, 4)) {
+    for (const line of rawLines.slice(0, 5)) {
       if (
         line.length >= 3 &&
         line.length <= 48 &&
@@ -126,12 +173,18 @@ export function parseIndonesianReceiptText(rawText: string): ParsedReceiptResult
   for (let i = 0; i < rawLines.length; i++) {
     const line = rawLines[i];
 
+    // Skip noise lines early so Order IDs, PINs, Phones, and Addresses never pollute items
+    if (NOISE_PATTERNS.some((p) => p.test(line))) {
+      continue;
+    }
+
     // Check if we reached post-payment footer (TUNAI, KEMBALI, DPP=, PPN DIBEBASKAN, POINKU)
     if (POST_TOTAL_STOP_PATTERNS.some((p) => p.test(line))) {
       inSummarySection = true;
       pendingItemName = null;
+      pendingItemQty = null;
 
-      if (/\b(anda\s*hemat|total\s*hemat)\b/i.test(line)) {
+      if (/\b(anda\s*hemat|total\s*hemat|kamu\s*hemat)\b/i.test(line)) {
         const m = line.match(/([\dOo.,]+)\s*$/);
         if (m) detectedSavings = parseIdrToken(m[1]);
       }
@@ -145,32 +198,57 @@ export function parseIndonesianReceiptText(rawText: string): ParsedReceiptResult
       continue;
     }
 
-    // Check section-end summary lines (HARGA JUAL, SUBTOTAL, TOTAL)
-    if (SECTION_END_PATTERNS.some((p) => p.test(line))) {
+    // Check subtotal lines (HARGA JUAL, SUBTOTAL, TOTAL HARGA on GoFood)
+    if (SUBTOTAL_PATTERNS.some((p) => p.test(line))) {
       inSummarySection = true;
       pendingItemName = null;
-      const totalMatch = line.match(/((?:rp\.?\s*)?[\dOo]{1,3}(?:[.,][\dOo]{3})+(?:[.,]\d{2})?|(?:rp\.?\s*)?[\dOo]{3,7})\s*$/i);
+      pendingItemQty = null;
+      const subMatch = line.match(
+        /((?:rp\.?\s*)?[\dOo]{1,3}(?:[.,][\dOo]{3})+(?:[.,]\d{2})?|(?:rp\.?\s*)?[\dOo]{3,7})\s*$/i
+      );
+      if (subMatch) {
+        const val = parseIdrToken(subMatch[1]);
+        if (val > 0) detectedSubtotal = val;
+      }
+      continue;
+    }
+
+    // Check final grand total lines (TOTAL, GRAND TOTAL, TOTAL PEMBAYARAN, TOTAL TAGIHAN)
+    if (GRAND_TOTAL_PATTERNS.some((p) => p.test(line))) {
+      inSummarySection = true;
+      pendingItemName = null;
+      pendingItemQty = null;
+      const totalMatch = line.match(
+        /((?:rp\.?\s*)?[\dOo]{1,3}(?:[.,][\dOo]{3})+(?:[.,]\d{2})?|(?:rp\.?\s*)?[\dOo]{3,7})\s*$/i
+      );
       if (totalMatch) {
         const val = parseIdrToken(totalMatch[1]);
-        if (val > 0 && !/\bsub\s*total|subtotal\b/i.test(line)) {
+        if (val > 0) {
           detectedReceiptTotal = val;
         }
       }
       continue;
     }
 
-    // Detect parenthesized or negative discount lines (e.g. "VC PT RBI : (4,600)")
-    const parenDiscount = line.match(/\(\s*(?:rp\.?\s*)?([\dOo]{1,3}(?:[.,][\dOo]{3})+|[\dOo]{3,7})\s*\)\s*$/i);
+    // Detect parenthesized discount lines (e.g. "VC PT RBI : (4,600)" or "DISKON : (1.300)")
+    const parenDiscount = line.match(
+      /\(\s*(?:rp\.?\s*)?([\dOo]{1,3}(?:[.,][\dOo]{3})+|[\dOo]{1,7})\s*\)\s*$/i
+    );
     if (parenDiscount) {
       const discVal = parseIdrToken(parenDiscount[1]);
-      if (discVal > 0) discountAmount += discVal;
+      // Ignore tiny 1-rupiah free plastic bag offset "(1)" when Plastics SDG is 1 rupiah
+      if (discVal >= 100) {
+        discountAmount += discVal;
+      }
       pendingItemName = null;
+      pendingItemQty = null;
       continue;
     }
 
-    // Pattern 0 (2-line POS/Restaurant receipt):
-    // Line 1: "Nasi Goreng Spesial" (stored in pendingItemName)
-    // Line 2: "2 x 28.000   56.000" or "1 @ 32,000   32,000" or "2x @28.000 56.000"
+    // Pattern 0 (2-line or multi-line POS / GoFood / Restaurant receipt):
+    // Line 1: "Sei Sapi Sambal Luat" (or "2x Sei Sapi Sambal Luat")
+    // (Optional middle modifier lines like "+ Sambal Luat", "Catatan: ..." are ignored without clearing pendingItemName!)
+    // Line N: "2 x 28.000   56.000" or "1 @ Rp 32.000   Rp 32.000" or "2 x Rp28.000"
     if (!inSummarySection && pendingItemName) {
       const twoLineDetail = line.match(
         /^(\d{1,3}|[|Il])\s*[xX*@]\s*@?\s*(?:rp\.?\s*)?([\dOo]{1,3}(?:[.,][\dOo]{3})+|[\dOo]{3,7})(?:\s+(?:rp\.?\s*)?([\dOo]{1,3}(?:[.,][\dOo]{3})+|[\dOo]{3,7}))?$/i
@@ -183,84 +261,119 @@ export function parseIndonesianReceiptText(rawText: string): ParsedReceiptResult
         const lineTot = twoLineDetail[3] ? parseIdrToken(twoLineDetail[3]) : unit * qty;
         const resolvedUnit =
           unit > 0 ? unit : lineTot > 0 ? Math.round(lineTot / qty) : 0;
-        if (resolvedUnit > 0) {
+        if (resolvedUnit >= 100) {
           items.push({
             name: pendingItemName,
             qty,
             unit_price: resolvedUnit,
           });
           pendingItemName = null;
+          pendingItemQty = null;
           continue;
         }
       }
     }
 
-    // Extract trailing price (allow OCR O->0 typos in price digits like 25.00O)
+    // Extract trailing price token
     const priceMatch = line.match(
       /(-?\s*(?:rp\.?\s*)?[\dOo]{1,3}(?:[.,][\dOo]{3})+(?:[.,]\d{2})?|-?\s*(?:rp\.?\s*)?\d{3,7})\s*$/i
     );
     if (!priceMatch) {
-      // Remember clean item-name lines for 2-line POS receipts (ignore merchant header at top)
-      if (!inSummarySection && i >= 1 && isLikelyItemNameOnly(line) && line !== merchantName) {
-        pendingItemName = line;
-      } else {
-        pendingItemName = null;
+      if (!inSummarySection) {
+        // If this is a modifier/variant/note sub-line (e.g. "+ Sambal Luat", "Catatan: ..."),
+        // DO NOT overwrite pendingItemName so multi-line GoFood items stay linked!
+        if (isModifierOrNoteLine(line)) {
+          continue;
+        }
+        if (isLikelyItemNameOnly(line) && line !== merchantName) {
+          const leadQty = line.match(/^(\d{1,2})\s*[xX]\s+(.+)$/);
+          if (leadQty) {
+            pendingItemQty = Math.max(1, parseInt(leadQty[1], 10));
+            pendingItemName = leadQty[2].trim();
+          } else {
+            pendingItemQty = null;
+            pendingItemName = line;
+          }
+        }
       }
       continue;
     }
 
-    const amount = parseIdrToken(priceMatch[1]);
+    const rawPriceToken = priceMatch[1];
+    const amount = parseIdrToken(rawPriceToken);
     if (amount === 0) continue;
 
-    const leftPart = line.slice(0, priceMatch.index).trim();
+    let leftPart = line.slice(0, priceMatch.index).trim();
 
-    // Standalone price line paired with previous pendingItemName
+    // Standalone price line paired with previous pendingItemName (common on GoFood screenshots)
     if (!leftPart) {
-      if (!inSummarySection && pendingItemName && amount >= 300) {
-        items.push({ name: pendingItemName, qty: 1, unit_price: amount });
+      if (
+        !inSummarySection &&
+        pendingItemName &&
+        isPlausibleIdrPrice(rawPriceToken, amount)
+      ) {
+        const qty = pendingItemQty ?? 1;
+        items.push({
+          name: pendingItemName,
+          qty,
+          unit_price: qty > 1 ? Math.round(amount / qty) : amount,
+        });
         pendingItemName = null;
+        pendingItemQty = null;
       }
       continue;
     }
 
-    // Tax / Service / Discount / Fee lines
+    // Tax / Service / Discount / GoFood Delivery & Platform Fee lines
     if (/\b(pb1|ppn|tax|pajak|vat|pb\s*1)\b/i.test(leftPart)) {
       if (!/\bdpp\b|dibebaskan|incl/i.test(line)) {
         taxAmount += amount;
       }
       pendingItemName = null;
+      pendingItemQty = null;
       continue;
     }
-    if (/\b(service|svc|servis|layanan|gratuity)\b/i.test(leftPart)) {
+    if (/\b(service|svc|servis|gratuity)\b/i.test(leftPart)) {
       serviceAmount += amount;
       pendingItemName = null;
+      pendingItemQty = null;
       continue;
     }
     if (
-      /\b(vc\s*pt|voucher|disc|diskon|discount|promo|potongan|pot\.|hemat)\b/i.test(leftPart) ||
-      priceMatch[1].trim().startsWith("-")
+      /\b(vc\s*pt|voucher|disc|diskon|discount|promo|potongan|pot\.|hemat|cashback)\b/i.test(
+        leftPart
+      ) ||
+      rawPriceToken.trim().startsWith("-")
     ) {
       discountAmount += amount;
       pendingItemName = null;
+      pendingItemQty = null;
       continue;
     }
-    if (/\b(ongkir|delivery|bungkus|takeaway|packaging|biaya\s*lain|admin|rounding|pembulatan)\b/i.test(leftPart)) {
-      if (priceMatch[1].trim().startsWith("-")) {
+    if (
+      /\b(ongkir|ongkos\s*kirim|biaya\s*pengiriman|biaya\s*penanganan|biaya\s*bungkus|biaya\s*kemasan|biaya\s*restoran|biaya\s*layanan|biaya\s*pemesanan|biaya\s*platform|biaya\s*aplikasi|biaya\s*jasa|biaya\s*lain|delivery|bungkus|takeaway|packaging|admin|rounding|pembulatan)\b/i.test(
+        leftPart
+      )
+    ) {
+      if (rawPriceToken.trim().startsWith("-")) {
         discountAmount += amount;
       } else {
         otherFeeAmount += amount;
       }
       pendingItemName = null;
+      pendingItemQty = null;
       continue;
     }
 
     if (inSummarySection) {
       pendingItemName = null;
+      pendingItemQty = null;
       continue;
     }
 
     if (NOISE_PATTERNS.some((p) => p.test(leftPart))) {
       pendingItemName = null;
+      pendingItemQty = null;
       continue;
     }
 
@@ -277,8 +390,9 @@ export function parseIndonesianReceiptText(rawText: string): ParsedReceiptResult
       const candidateUnit = parseIdrToken(threeColMatch[3]);
       if (
         candidateName.length >= 2 &&
-        candidateUnit > 0 &&
-        Math.abs(candidateQty * candidateUnit - amount) <= Math.max(200, amount * 0.05)
+        candidateUnit >= 100 &&
+        Math.abs(candidateQty * candidateUnit - amount) <=
+          Math.max(200, amount * 0.05)
       ) {
         let resolvedUnit = candidateUnit;
         if (candidateQty === 1 && candidateUnit !== amount) {
@@ -298,11 +412,31 @@ export function parseIndonesianReceiptText(rawText: string): ParsedReceiptResult
           unit_price: resolvedUnit,
         });
         pendingItemName = null;
+        pendingItemQty = null;
         continue;
       }
     }
 
-    // Pattern B: Restaurant format "2x Nasi Goreng 76.000" or "Nasi Goreng x2 76.000"
+    // Guard against unformatted non-price numbers (e.g. "PIN: 4821", "Surabaya 60284", "Order #583920")
+    if (!isPlausibleIdrPrice(rawPriceToken, amount)) {
+      continue;
+    }
+
+    // Handle GoFood strikethrough dual-price on the same line:
+    // e.g. "1x Sei Sapi Sambal Luat Rp32.000 Rp40.000" -> use the lower promo price (32000) and strip price from name
+    let effectiveAmount = amount;
+    const dualPriceMatch = leftPart.match(
+      /^(.+?)\s+((?:rp\.?\s*)?[\dOo]{1,3}(?:[.,][\dOo]{3})+)\s*$/i
+    );
+    if (dualPriceMatch) {
+      const firstPrice = parseIdrToken(dualPriceMatch[2]);
+      if (firstPrice >= 1000) {
+        leftPart = dualPriceMatch[1].trim();
+        effectiveAmount = Math.min(firstPrice, amount);
+      }
+    }
+
+    // Pattern B: Restaurant / GoFood format "2x Sei Sapi 76.000" or "Sei Sapi x2 76.000"
     let qty = 1;
     let name = leftPart;
 
@@ -317,11 +451,20 @@ export function parseIndonesianReceiptText(rawText: string): ParsedReceiptResult
       qty = Math.max(1, parseInt(trailingQty[2], 10));
     }
 
-    name = name.replace(/@\s*[\dOo.,]+/g, "").replace(/[:\-–—]+$/, "").trim();
-    pendingItemName = null;
-    if (name.length < 2) continue;
+    name = name
+      .replace(/@\s*(?:rp\.?\s*)?[\dOo.,]+/gi, "")
+      .replace(/[:\-–—]+$/, "")
+      .trim();
 
-    const unitPrice = qty > 1 ? Math.round(amount / qty) : amount;
+    // If this line was a priced add-on modifier (e.g. "+ Nasi Putih 6.000"), clean the leading "+"
+    name = name.replace(/^[+*•]\s*/, "").trim();
+
+    pendingItemName = null;
+    pendingItemQty = null;
+    if (name.length < 2 || !/[a-zA-Z]{2,}/.test(name)) continue;
+
+    const unitPrice =
+      qty > 1 ? Math.round(effectiveAmount / qty) : effectiveAmount;
     items.push({ name, qty, unit_price: unitPrice });
   }
 
@@ -330,13 +473,15 @@ export function parseIndonesianReceiptText(rawText: string): ParsedReceiptResult
     discountAmount = detectedSavings;
   }
 
+  const finalTotal = detectedReceiptTotal || detectedSubtotal;
+
   // Smart Tax-Inclusive Reconciliation:
   // If items - discount already matches the printed TOTAL, tax was tax-inclusive (like Indomaret/Alfamart)
   const itemsSubtotal = items.reduce((s, it) => s + it.qty * it.unit_price, 0);
   if (
-    detectedReceiptTotal > 0 &&
+    finalTotal > 0 &&
     taxAmount > 0 &&
-    Math.abs(itemsSubtotal - discountAmount - detectedReceiptTotal) <= 500
+    Math.abs(itemsSubtotal + serviceAmount + otherFeeAmount - discountAmount - finalTotal) <= 500
   ) {
     taxAmount = 0;
   }
@@ -349,7 +494,7 @@ export function parseIndonesianReceiptText(rawText: string): ParsedReceiptResult
     service_amount: serviceAmount,
     other_fee_amount: otherFeeAmount,
     discount_amount: discountAmount,
-    printed_total: detectedReceiptTotal || undefined,
+    printed_total: finalTotal || undefined,
     engine: "tesseract",
     raw_text: rawText,
   };
