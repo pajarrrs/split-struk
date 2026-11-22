@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { ChevronRight, Minus, Plus, X } from "lucide-react";
+import { Camera, ChevronRight, Image as ImageIcon, Minus, Plus, X } from "lucide-react";
 import {
   prepareReceiptForUpload,
   preprocessReceiptForTesseract,
@@ -19,6 +19,7 @@ import type {
   ParsedReceiptResult,
   SavedBillSummary,
 } from "@/lib/types";
+import { CameraCaptureModal } from "./CameraCaptureModal";
 import { ReceiptImageModal } from "./ReceiptImageModal";
 import { SplitBillSummaryView } from "./SplitBillSummaryView";
 
@@ -74,6 +75,9 @@ export function SplitStrukWorkspace({ editSlug }: { editSlug?: string | null }) 
 
   const [uploadingQris, setUploadingQris] = useState(false);
   const [savingBill, setSavingBill] = useState(false);
+  const [cameraOpen, setCameraOpen] = useState(false);
+  const cameraInputRef = useRef<HTMLInputElement | null>(null);
+  const galleryInputRef = useRef<HTMLInputElement | null>(null);
 
   const [previewImg, setPreviewImg] = useState<{
     src: string;
@@ -272,6 +276,22 @@ export function SplitStrukWorkspace({ editSlug }: { editSlug?: string | null }) 
       setScanning(false);
       setScanLabel("");
       setScanProgress(null);
+    }
+  }
+
+  function handleOpenCamera() {
+    if (scanning) return;
+    // On mobile phones, native camera capture has superior autofocus & flash for small receipt fonts;
+    // on desktop/laptop browsers (where capture attribute falls back to file picker), open live webcam modal.
+    const isMobileDevice =
+      typeof window !== "undefined" &&
+      (window.matchMedia?.("(pointer: coarse)").matches ||
+        /Android|iPhone|iPad|iPod/i.test(navigator.userAgent));
+
+    if (isMobileDevice) {
+      cameraInputRef.current?.click();
+    } else {
+      setCameraOpen(true);
     }
   }
 
@@ -549,54 +569,88 @@ export function SplitStrukWorkspace({ editSlug }: { editSlug?: string | null }) 
             </p>
           </div>
 
-          {/* Primary iOS Upload Card */}
+          {/* Primary iOS Upload & Camera Card */}
           <div className="overflow-hidden rounded-[22px] bg-white p-5 shadow-[0_2px_16px_rgba(0,0,0,0.04)] ring-1 ring-black/5">
-            <label className="block cursor-pointer text-center">
-              {scanning ? (
-                <div className="py-6">
-                  <div className="mx-auto h-8 w-8 animate-spin rounded-full border-2 border-[#E5E5EA] border-t-[#007AFF]" />
-                  <p className="mt-3 text-[15px] font-semibold text-[#1C1C1E]">
-                    {scanLabel}
+            {scanning ? (
+              <div className="py-6 text-center">
+                <div className="mx-auto h-8 w-8 animate-spin rounded-full border-2 border-[#E5E5EA] border-t-[#007AFF]" />
+                <p className="mt-3 text-[15px] font-semibold text-[#1C1C1E]">
+                  {scanLabel}
+                </p>
+                {scanProgress !== null && (
+                  <div className="mx-auto mt-3 h-1.5 w-44 overflow-hidden rounded-full bg-[#E5E5EA]">
+                    <div
+                      className="h-full rounded-full bg-[#007AFF] transition-all"
+                      style={{ width: `${scanProgress}%` }}
+                    />
+                  </div>
+                )}
+              </div>
+            ) : (
+              <div className="space-y-4 text-center">
+                <div className="pt-1">
+                  <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-[14px] bg-[#EBF4FF] text-[#007AFF]">
+                    <Camera className="h-6 w-6" />
+                  </div>
+                  <p className="mt-3 text-[16px] font-semibold tracking-[-0.015em] text-[#1C1C1E]">
+                    Foto atau Pilih Struk Belanja
                   </p>
-                  {scanProgress !== null && (
-                    <div className="mx-auto mt-3 h-1.5 w-44 overflow-hidden rounded-full bg-[#E5E5EA]">
-                      <div
-                        className="h-full rounded-full bg-[#007AFF] transition-all"
-                        style={{ width: `${scanProgress}%` }}
-                      />
-                    </div>
-                  )}
+                  <p className="mt-0.5 text-[13px] text-[#8E8E93]">
+                    Foto langsung dengan kamera atau unggah dari galeri
+                  </p>
                 </div>
-              ) : (
-                <div className="space-y-3 py-2">
-                  <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-[14px] bg-[#EBF4FF] text-[15px] font-bold text-[#007AFF]">
-                    OCR
-                  </div>
-                  <div>
-                    <p className="text-[16px] font-semibold tracking-[-0.015em] text-[#1C1C1E]">
-                      Ambil Foto atau Pilih Struk
-                    </p>
-                    <p className="mt-0.5 text-[13px] text-[#8E8E93]">
-                      JPG, PNG, atau WEBP · Maks. 8MB
-                    </p>
-                  </div>
-                  <span className="mt-2 block w-full rounded-[14px] bg-[#007AFF] py-3.5 text-[15px] font-semibold text-white transition active:scale-[0.98]">
-                    Scan Struk Sekarang
-                  </span>
+
+                <div className="grid grid-cols-2 gap-2.5">
+                  <button
+                    type="button"
+                    disabled={scanning}
+                    onClick={handleOpenCamera}
+                    className="flex items-center justify-center gap-2 rounded-[14px] bg-[#007AFF] py-3.5 text-[14px] font-semibold text-white transition active:scale-[0.98]"
+                  >
+                    <Camera className="h-4 w-4" />
+                    Foto Struk
+                  </button>
+                  <button
+                    type="button"
+                    disabled={scanning}
+                    onClick={() => galleryInputRef.current?.click()}
+                    className="flex items-center justify-center gap-2 rounded-[14px] bg-[#EBF4FF] py-3.5 text-[14px] font-semibold text-[#007AFF] transition active:scale-[0.98]"
+                  >
+                    <ImageIcon className="h-4 w-4" />
+                    Pilih Galeri
+                  </button>
                 </div>
-              )}
-              <input
-                type="file"
-                accept="image/png,image/jpeg,image/webp"
-                className="hidden"
-                disabled={scanning}
-                onChange={(e) => {
-                  const f = e.target.files?.[0];
-                  if (f) handleReceiptFileSelected(f);
-                  e.target.value = "";
-                }}
-              />
-            </label>
+              </div>
+            )}
+
+            {/* Native rear camera input for mobile devices */}
+            <input
+              ref={cameraInputRef}
+              type="file"
+              accept="image/*"
+              capture="environment"
+              className="hidden"
+              disabled={scanning}
+              onChange={(e) => {
+                const f = e.target.files?.[0];
+                if (f) handleReceiptFileSelected(f);
+                e.target.value = "";
+              }}
+            />
+
+            {/* Standard gallery / file picker input */}
+            <input
+              ref={galleryInputRef}
+              type="file"
+              accept="image/*"
+              className="hidden"
+              disabled={scanning}
+              onChange={(e) => {
+                const f = e.target.files?.[0];
+                if (f) handleReceiptFileSelected(f);
+                e.target.value = "";
+              }}
+            />
 
             <div className="mt-3 border-t border-[#F2F2F7] pt-3">
               <button
@@ -1300,6 +1354,20 @@ export function SplitStrukWorkspace({ editSlug }: { editSlug?: string | null }) 
           title={previewImg.title}
           allowDownload={false}
           onClose={() => setPreviewImg(null)}
+        />
+      )}
+
+      {cameraOpen && (
+        <CameraCaptureModal
+          onClose={() => setCameraOpen(false)}
+          onFallbackToFile={() => {
+            setCameraOpen(false);
+            galleryInputRef.current?.click();
+          }}
+          onCapture={(file) => {
+            setCameraOpen(false);
+            handleReceiptFileSelected(file);
+          }}
         />
       )}
     </div>
