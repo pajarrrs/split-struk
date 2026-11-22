@@ -85,6 +85,7 @@ export interface ParsedReceiptResult {
   service_amount: number;
   other_fee_amount: number;
   discount_amount: number;
-  engine: "gemini" | "tesseract" | "demo";
+  printed_total?: number;
+  engine: "gemini" | "groq" | "openai" | "tesseract" | "demo";
   raw_text?: string;
 }

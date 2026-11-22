@@ -3,6 +3,10 @@
 import Link from "next/link";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ChevronRight, Minus, Plus, X } from "lucide-react";
+import {
+  prepareReceiptForUpload,
+  preprocessReceiptForTesseract,
+} from "@/lib/image-preprocess";
 import { parseIndonesianReceiptText } from "@/lib/receipt-parser";
 import {
   calculateSplit,
@@ -57,6 +61,7 @@ export function SplitStrukWorkspace({ editSlug }: { editSlug?: string | null }) 
   const [ocrEngine, setOcrEngine] = useState<ParsedReceiptResult["engine"] | null>(
     null
   );
+  const [printedTotal, setPrintedTotal] = useState<number | null>(null);
 
   const [scanning, setScanning] = useState(false);
   const [scanLabel, setScanLabel] = useState("");
@@ -193,17 +198,21 @@ export function SplitStrukWorkspace({ editSlug }: { editSlug?: string | null }) 
       items: mappedItems,
     }));
     setOcrEngine(parsed.engine);
+    setPrintedTotal(parsed.printed_total ?? null);
     setStep("edit");
   }
 
   async function handleReceiptFileSelected(file: File) {
     setScanning(true);
     setScanProgress(null);
-    setScanLabel("Membaca struk...");
+    setScanLabel("Menyiapkan foto struk...");
 
     try {
+      const uploadFile = await prepareReceiptForUpload(file);
+      setScanLabel("Membaca struk...");
+
       const form = new FormData();
-      form.append("file", file);
+      form.append("file", uploadFile);
 
       const res = await fetch("/api/ocr", { method: "POST", body: form });
       const data = await res.json();
@@ -215,18 +224,22 @@ export function SplitStrukWorkspace({ editSlug }: { editSlug?: string | null }) 
 
       if (data.parsed && !data.fallback_needed) {
         applyParsedReceipt(data.parsed, data.receipt_image_url);
-        notify("Struk berhasil dibaca. Cek kembali jika perlu.", "success");
+        notify("Struk berhasil dibaca AI Vision. Cek kembali jika perlu.", "success");
         return;
       }
 
-      setScanLabel("Memindai teks struk...");
+      setScanLabel("Meningkatkan kontras foto...");
       setScanProgress(5);
+      const enhancedBlob = await preprocessReceiptForTesseract(file);
+
+      setScanLabel("Memindai teks struk...");
+      setScanProgress(12);
 
       const { createWorker, PSM } = await import("tesseract.js");
       const worker = await createWorker("ind+eng", 1, {
         logger: (m) => {
           if (m.status === "recognizing text" && typeof m.progress === "number") {
-            setScanProgress(Math.max(10, Math.round(m.progress * 100)));
+            setScanProgress(Math.max(15, Math.round(m.progress * 100)));
           }
         },
       });
@@ -236,7 +249,7 @@ export function SplitStrukWorkspace({ editSlug }: { editSlug?: string | null }) 
       });
 
       try {
-        const result = await worker.recognize(file);
+        const result = await worker.recognize(enhancedBlob);
         const parsed = parseIndonesianReceiptText(result.data.text || "");
         applyParsedReceipt(parsed, data.receipt_image_url);
         if (parsed.items.length === 0) {
@@ -245,7 +258,10 @@ export function SplitStrukWorkspace({ editSlug }: { editSlug?: string | null }) 
             "error"
           );
         } else {
-          notify(`${parsed.items.length} item terbaca. Koreksi bila ada yang keliru.`, "success");
+          notify(
+            `${parsed.items.length} item terbaca (OCR lokal). Koreksi bila ada yang keliru.`,
+            "success"
+          );
         }
       } finally {
         await worker.terminate();
@@ -265,12 +281,14 @@ export function SplitStrukWorkspace({ editSlug }: { editSlug?: string | null }) 
       items: [{ id: uid("item"), name: "", qty: 1, unit_price: 0, assigned_to: [] }],
     });
     setOcrEngine(null);
+    setPrintedTotal(null);
     setStep("edit");
   }
 
   function handleResetNew() {
     setBill(createEmptyBill());
     setOcrEngine(null);
+    setPrintedTotal(null);
     setStep("scan");
   }
 
@@ -640,30 +658,57 @@ export function SplitStrukWorkspace({ editSlug }: { editSlug?: string | null }) 
       {/* STEP 2: EDIT ITEMS & EXTRAS (iOS Inset Grouped Form) */}
       {step === "edit" && (
         <main className="flex-1 space-y-5 px-4 pb-32 pt-4">
-          {/* Engine status + View original receipt */}
-          <div className="flex items-center justify-between gap-2 rounded-[16px] bg-white px-4 py-3 ring-1 ring-black/5">
-            <span className="text-[12px] font-medium text-[#8E8E93]">
-              {ocrEngine === "gemini"
-                ? "Dipindai Gemini Vision"
-                : ocrEngine === "tesseract"
-                ? "Dipindai OCR lokal · Cek nominal"
-                : ocrEngine === "demo"
-                ? "Mode contoh struk"
-                : "Input manual"}
-            </span>
-            {bill.receipt_image_url && (
-              <button
-                type="button"
-                onClick={() =>
-                  setPreviewImg({
-                    src: bill.receipt_image_url!,
-                    title: "Foto Struk Asli",
-                  })
-                }
-                className="text-[13px] font-semibold text-[#007AFF]"
+          {/* Engine status + Total reconciliation + View original receipt */}
+          <div className="space-y-2 rounded-[16px] bg-white px-4 py-3 ring-1 ring-black/5">
+            <div className="flex items-center justify-between gap-2">
+              <span className="text-[12px] font-medium text-[#8E8E93]">
+                {ocrEngine === "gemini"
+                  ? "Dipindai Gemini Vision AI"
+                  : ocrEngine === "groq"
+                  ? "Dipindai Llama Vision AI"
+                  : ocrEngine === "openai"
+                  ? "Dipindai OpenAI Vision"
+                  : ocrEngine === "tesseract"
+                  ? "OCR Lokal · Pasang GEMINI_API_KEY untuk akurasi AI"
+                  : ocrEngine === "demo"
+                  ? "Mode contoh struk"
+                  : "Input manual"}
+              </span>
+              {bill.receipt_image_url && (
+                <button
+                  type="button"
+                  onClick={() =>
+                    setPreviewImg({
+                      src: bill.receipt_image_url!,
+                      title: "Foto Struk Asli",
+                    })
+                  }
+                  className="shrink-0 text-[13px] font-semibold text-[#007AFF]"
+                >
+                  Lihat Struk
+                </button>
+              )}
+            </div>
+
+            {printedTotal && printedTotal > 0 && (
+              <div
+                className={`flex items-center justify-between rounded-[10px] px-3 py-1.5 text-[12px] font-medium ${
+                  summary.grand_total === printedTotal
+                    ? "bg-[#34C759]/12 text-[#1E8E3E]"
+                    : "bg-[#FF9500]/12 text-[#B25E00]"
+                }`}
               >
-                Lihat Struk
-              </button>
+                <span>
+                  {summary.grand_total === printedTotal
+                    ? "Cocok 100% dengan total struk"
+                    : `Selisih ${formatRupiah(
+                        Math.abs(summary.grand_total - printedTotal)
+                      )} dari total struk`}
+                </span>
+                <span className="tabular-nums font-semibold">
+                  {formatRupiah(printedTotal)}
+                </span>
+              </div>
             )}
           </div>
 
